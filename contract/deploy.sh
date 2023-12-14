@@ -1,6 +1,6 @@
 #!/bin/sh
 
-./build.sh
+#./build.sh
 
 echo ">> Deploying contract"
 

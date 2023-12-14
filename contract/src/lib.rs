@@ -4,13 +4,13 @@ use std::fmt;
 // Find all our documentation at https://docs.near.org
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::env::log_str;
-use near_sdk::serde::Serialize;
+use near_sdk::serde::{Serialize,Deserialize};
 use near_sdk::near_bindgen;
 use near_sdk::{Balance,AccountId,env};
 use near_sdk::collections::{LookupMap, Vector};
 
 #[near_bindgen]
-#[derive(BorshDeserialize, BorshSerialize, Serialize)]
+#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
 //医疗记录
 pub struct MedicalRecord {
