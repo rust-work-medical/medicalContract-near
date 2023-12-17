@@ -21,8 +21,25 @@ pub struct MedicalRecord {
   //看病时间
   pub time: String
 }
-
-
+#[near_bindgen]
+#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize)]
+#[serde(crate = "near_sdk::serde")]
+//药方记录
+pub struct Prescription {
+    pub medicine: Vec<Medicine>,
+    pub prescribing_doctor: String,
+    pub prescription_time: String,
+    pub is_use:bool,
+}
+#[near_bindgen]
+#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize,Clone)]
+#[serde(crate = "near_sdk::serde")]
+//药
+pub struct Medicine {
+    pub medicine_info: String,
+    pub medicine_price: String,
+    pub medicine_name: String,
+}
 impl fmt::Display for MedicalRecord {
     fn fmt<'a>(&self, f: &mut fmt::Formatter<'a>) -> fmt::Result {
         write!(f, "MedicalRecord(doctor: {}, detail: {}, time: {})", self.doctor, self.detail, self.time)
@@ -39,6 +56,8 @@ pub struct Contract {
     pub patient_record: UnorderedMap<String, Vector<MedicalRecord>>,
     //授权病例查询列表
     pub allow_record: UnorderedMap<String, UnorderedSet<String>>,
+    //病人药方记录
+    pub patient_medicine: UnorderedMap<String, Vector<Prescription>>,
 }
 const MIN_STORAGE: Balance = 1_100_000_000_000_000_000_000_000; //1.1Ⓝ
 const POINT_ONE: Balance = 100_000_000_000_000_000_000_000;//0.1N
@@ -50,7 +69,8 @@ impl Default for Contract {
             //需要注意，每一个区块链接口提供的数据结构在初始化的时候都需要添加一个前缀，如果是嵌套结构，在嵌套结构里也需要添加前缀，前缀可以使用账户ID或者其他形式，前缀不能一样
             patient_record: UnorderedMap::new(b"p"),
             identify: UnorderedMap::new(b"i"),
-            allow_record:UnorderedMap::new(b"a")
+            allow_record:UnorderedMap::new(b"a"),
+            patient_medicine:UnorderedMap::new(b"m")
         }
     }
 }
@@ -164,7 +184,67 @@ impl Contract {
             return Vec::new();
         }
     }
+    //医生开药方
+    pub fn prescribe_medicine(&mut self, patient_id: String, medicine: Vec<Medicine>) -> bool {
+        // 获取调用者账户ID
+        let doctor_id = env::signer_account_id().to_string();
 
+        // 确保调用者是医生
+        assert!(
+            self.identify.get(&doctor_id) == Some("doctor".to_string()),
+            "只有医生可以调用此函数"
+        );
+
+        // 创建处方记录
+        let prescription = Prescription {
+            medicine,
+            prescribing_doctor: doctor_id.clone(),
+            prescription_time: env::block_timestamp().to_string(),
+            is_use: false,
+        };
+
+        // 将处方添加到患者记录中
+        if(self.patient_medicine.get(&patient_id).is_some()){
+            self.patient_medicine.get(&patient_id).unwrap().push(&prescription);
+        }else {
+            let prefix: Vec<u8> = 
+            [
+                b"p".as_slice(),
+                &near_sdk::env::sha256_array(&patient_id.as_bytes()),
+            ].concat();
+            let mut new_prescriptions: Vector<Prescription> = Vector::new(prefix);
+            new_prescriptions.push(&prescription);
+            self.patient_medicine.insert(&patient_id, &new_prescriptions);
+        }
+
+        true
+    }
+         // 药房工作人员确认用户缴费并发药
+         pub fn confirm_payment_and_dispense_medicine(&mut self, patient_id: String, prescription_index: u64) -> bool {
+            // 获取调用者账户ID
+            let pharmacy_staff_id = env::signer_account_id().to_string();
+            // 确保调用者是药房工作人员
+            assert!(
+                self.identify.get(&pharmacy_staff_id) == Some("pharmacy".to_string()),
+                "只有药房工作人员可以调用此函数"
+            );
+            // 获取患者药方记录
+            if(self.patient_medicine.get(&patient_id).is_some()){
+                // 确保索引有效
+                assert!(prescription_index < self.patient_medicine.get(&patient_id).unwrap().len() as u64, "药方索引无效");
+                // 获取要更新的药方记录
+                let mut patient_prescription=self.patient_medicine.get(&patient_id).unwrap();
+                if (patient_prescription.get(prescription_index as u64).is_some()) {
+                    // 直接更新 is_use 变量,必须使用replace，不能直接修改变量的值，是不起作用的
+                    let mut pre=patient_prescription.get(prescription_index as u64).unwrap();
+                    pre.is_use=true;
+                    patient_prescription.replace(prescription_index, &pre);
+                    return true;
+                }
+                return false;
+            }
+            false
+        }
 }
 
 /*
@@ -255,6 +335,68 @@ mod tests {
 
         // 重置上下文为其他测试
         let context = get_context(true,"bob.near".to_string());
+        testing_env!(context);
+    }
+    //测试添加药方，及验证药方
+    #[test]
+    fn test_prescribe_medicine() {
+        // 创建合约实例
+        let mut contract = Contract::default();
+
+        // 设置测试上下文，模拟医生调用开药方函数
+        let context = get_context(false, "doctor.near".to_string());
+        testing_env!(context);
+        let doctor_id = "doctor.near".to_string();
+        contract.identify.insert(&doctor_id,&"doctor".to_string());
+        // 假设这是一个病人ID
+        let patient_id = "patient.near".to_string();
+        contract.identify.insert(&patient_id,&"patient".to_string());
+        // 假设这是一个药物信息
+        let medicine = vec![
+            Medicine {
+                medicine_info: "Information about Medicine A".to_string(),
+                medicine_price: "10 NEAR".to_string(),
+                medicine_name: "Medicine A".to_string(),
+            },
+            Medicine {
+                medicine_info: "Information about Medicine B".to_string(),
+                medicine_price: "15 NEAR".to_string(),
+                medicine_name: "Medicine B".to_string(),
+            },
+        ];
+
+        // 调用医生开药方函数
+        let result = contract.prescribe_medicine(patient_id.clone(), medicine.clone());
+
+        // 验证结果
+        assert!(result, "开药方失败");
+
+        // 验证药方是否正确添加到患者记录中
+        let patient_medicine = contract.patient_medicine.get(&patient_id).unwrap();
+        assert_eq!(patient_medicine.len(), 1, "患者记录中应有一条药方");
+
+        let prescribed_medicine = &patient_medicine.get(0).unwrap();;
+        assert_eq!(
+            prescribed_medicine.medicine.len(),
+            2,
+            "药方中应包含两种药物"
+        );
+        //验证药方付款后修改使用状态
+        contract.identify.insert(&doctor_id,&"pharmacy".to_string());
+
+        // 重置上下文为其他测试
+       
+        let result = contract.confirm_payment_and_dispense_medicine(patient_id.clone(), 0);
+         // 验证结果
+         assert!(result);
+       // 验证药方记录是否更新
+        let updated_prescription = contract.patient_medicine.get(&patient_id).unwrap().get(0).unwrap();
+        assert!(updated_prescription.is_use);
+
+        // 额外检查：在修改后读取 is_use，并验证它是否被正确设置
+        let is_use_after_update = updated_prescription.is_use;
+        assert!(is_use_after_update);
+        let context = get_context(true, "doctor.near".to_string());
         testing_env!(context);
     }
 }
