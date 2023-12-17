@@ -245,6 +245,29 @@ impl Contract {
             }
             false
         }
+    // 查询某人药方的函数
+    pub fn get_user_prescriptions(&self, patient_id: String) -> Vec<Prescription> {
+        // 检查调用者是否是患者本人
+        let caller = env::signer_account_id();
+        let is_patient_himself = patient_id == caller.to_string();
+
+        // 如果不是患者本人，则检查调用者是否在授权名单中
+        if !is_patient_himself {
+            assert!(
+                self.allow_record.get(&patient_id).is_some()
+                    && self.allow_record.get(&patient_id).unwrap().contains(&caller.to_string()),
+                "您没有权限查询该患者的药方"
+            );
+        }
+
+        // 获取患者的药方记录
+        if let Some(patient_prescriptions) = self.patient_medicine.get(&patient_id) {
+            // 返回药方记录列表
+            return patient_prescriptions.to_vec();
+        } else {
+            return Vec::new();
+        }
+    }
 }
 
 /*
@@ -337,7 +360,7 @@ mod tests {
         let context = get_context(true,"bob.near".to_string());
         testing_env!(context);
     }
-    //测试添加药方，及验证药方
+    //测试添加药方，及验证药方及查询药方
     #[test]
     fn test_prescribe_medicine() {
         // 创建合约实例
@@ -396,6 +419,18 @@ mod tests {
         // 额外检查：在修改后读取 is_use，并验证它是否被正确设置
         let is_use_after_update = updated_prescription.is_use;
         assert!(is_use_after_update);
+
+        //测试查询用户药方情况
+        // 以医生身份调用函数
+        let mut authorized_doctors = UnorderedSet::new(b"a".to_vec());
+        authorized_doctors.insert(&doctor_id);
+        contract.allow_record.insert(&patient_id, &authorized_doctors);
+
+        let patient_records = contract.get_user_prescriptions(patient_id.clone());
+
+        // 验证结果
+        assert_eq!(patient_records.len(), 1);
+
         let context = get_context(true, "doctor.near".to_string());
         testing_env!(context);
     }
