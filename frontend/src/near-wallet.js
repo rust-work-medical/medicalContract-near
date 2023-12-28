@@ -30,7 +30,7 @@ export class Wallet {
     // Omitting the accountId will result in the user being
     // asked to sign all transactions.
     this.createAccessKeyFor = createAccessKeyFor
-    this.network = network
+    this.network = 'testnet'
   }
 
   // To be called when the website loads
