@@ -40,6 +40,15 @@ pub struct Medicine {
     pub medicine_price: String,
     pub medicine_name: String,
 }
+#[near_bindgen]
+#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+//患者预约挂号记录
+pub struct Reservation {
+    pub patient: String,
+    pub doctor: String,
+    pub time: String
+}
 impl fmt::Display for MedicalRecord {
     fn fmt<'a>(&self, f: &mut fmt::Formatter<'a>) -> fmt::Result {
         write!(f, "MedicalRecord(doctor: {}, detail: {}, time: {})", self.doctor, self.detail, self.time)
@@ -58,6 +67,10 @@ pub struct Contract {
     pub allow_record: UnorderedMap<String, UnorderedSet<String>>,
     //病人药方记录
     pub patient_medicine: UnorderedMap<String, Vector<Prescription>>,
+    //患者预约挂号记录列表
+    pub reservation_record: UnorderedMap<String, Reservation>,
+    //医生状态 true代表空闲 false代表已有预约
+    pub doctor_status: UnorderedMap<String, bool>
 }
 const MIN_STORAGE: Balance = 1_100_000_000_000_000_000_000_000; //1.1Ⓝ
 const POINT_ONE: Balance = 100_000_000_000_000_000_000_000;//0.1N
@@ -70,7 +83,9 @@ impl Default for Contract {
             patient_record: UnorderedMap::new(b"p"),
             identify: UnorderedMap::new(b"i"),
             allow_record:UnorderedMap::new(b"a"),
-            patient_medicine:UnorderedMap::new(b"m")
+            patient_medicine:UnorderedMap::new(b"m"),
+            reservation_record:UnorderedMap::new(b"r"),
+            doctor_status:UnorderedMap::new(b"d")
         }
     }
 }
@@ -83,6 +98,9 @@ impl Contract {
         log_str(&format!("Saving greeting: {:?}", role));
         log_str(&format!("{}",env::signer_account_id().as_str().to_string()));
         self.identify.insert(&env::signer_account_id().as_str().to_string(),&role);
+        if role == "doctor" {
+            self.doctor_status.insert(&env::signer_account_id().as_str().to_string(),&true);
+        }
         return true;
     }
 
@@ -94,6 +112,15 @@ impl Contract {
             None => panic!("该账户还没有角色")
           };
     }
+
+    //检查某用户是否拥有某个权限
+    pub fn check_role(&self, account_id: &str, role:String) -> bool {
+        match self.identify.get(&account_id.to_string()){
+            Some(x) => return x == role,
+            None => panic!("该账户还没有角色")
+        }
+    }
+
     //添加病例
     pub fn add_record(&mut self,patient:String,detail:String)->bool{
         let val = match self.identify.get(&env::signer_account_id().as_str().to_string()) {
@@ -105,17 +132,17 @@ impl Contract {
                         let medical_record = MedicalRecord {
                             doctor: env::signer_account_id().as_str().to_string(),
                             detail: detail,
-                            time: env::block_timestamp().to_string(),
+                            time: env::block_timestamp().to_string(),//timestamp?
                         };
                         //如果存在直接插入一条新记录，如果不存在则新建一个Vector,并插入
-                        if(self.patient_record.get(&patient_id).is_some()){
+                        if self.patient_record.get(&patient_id).is_some() {
                             self.patient_record.get(&patient_id).unwrap().push(&medical_record);
                         }else {
                             let prefix: Vec<u8> = 
                             [
                                 b"m".as_slice(),
                                 &near_sdk::env::sha256_array(patient_id.as_bytes()),
-                            ].concat();
+                            ].concat();//prefix的作用?
                             let mut patient_recode_vec:Vector<MedicalRecord>=Vector::new(prefix);
                             patient_recode_vec.push(&medical_record);
                             self.patient_record.insert(&patient_id,&patient_recode_vec);
@@ -125,7 +152,7 @@ impl Contract {
                         log_str(&format!("当前时间: {}",env::block_timestamp()));
                         return true;
                     },
-                    None => return false,
+                    None => return false,//panic
                 }
 
             },
@@ -137,14 +164,14 @@ impl Contract {
         assert!(self.identify.get(&doctor).is_some(), "授权账户没有角色");
         assert!(self.identify.get(&env::signer_account_id().as_str().to_string()).is_some(), "该账户还没有角色");
         //如果允许列表已经含有该角色的授权列表
-        if(self.allow_record.get(&env::signer_account_id().as_str().to_string()).is_some()){
+        if self.allow_record.get(&env::signer_account_id().as_str().to_string()).is_some() {
             self.allow_record.get(&env::signer_account_id().as_str().to_string()).unwrap().insert(&doctor);
         }else {
             let prefix: Vec<u8> = 
             [
                 b"a".as_slice(),
                 &near_sdk::env::sha256_array(&env::signer_account_id().as_str().to_string().as_bytes()),
-            ].concat();
+            ].concat();//prefix的作用?
             let mut patient_recode_vec:UnorderedSet<String>=UnorderedSet::new(prefix);
             patient_recode_vec.insert(&doctor);
             self.allow_record.insert(&env::signer_account_id().as_str().to_string(),&patient_recode_vec);
@@ -204,7 +231,7 @@ impl Contract {
         };
 
         // 将处方添加到患者记录中
-        if(self.patient_medicine.get(&patient_id).is_some()){
+        if self.patient_medicine.get(&patient_id).is_some(){
             self.patient_medicine.get(&patient_id).unwrap().push(&prescription);
         }else {
             let prefix: Vec<u8> = 
@@ -219,32 +246,32 @@ impl Contract {
 
         true
     }
-         // 药房工作人员确认用户缴费并发药
-         pub fn confirm_payment_and_dispense_medicine(&mut self, patient_id: String, prescription_index: u64) -> bool {
-            // 获取调用者账户ID
-            let pharmacy_staff_id = env::signer_account_id().to_string();
-            // 确保调用者是药房工作人员
-            assert!(
-                self.identify.get(&pharmacy_staff_id) == Some("pharmacy".to_string()),
-                "只有药房工作人员可以调用此函数"
-            );
-            // 获取患者药方记录
-            if(self.patient_medicine.get(&patient_id).is_some()){
-                // 确保索引有效
-                assert!(prescription_index < self.patient_medicine.get(&patient_id).unwrap().len() as u64, "药方索引无效");
-                // 获取要更新的药方记录
-                let mut patient_prescription=self.patient_medicine.get(&patient_id).unwrap();
-                if (patient_prescription.get(prescription_index as u64).is_some()) {
-                    // 直接更新 is_use 变量,必须使用replace，不能直接修改变量的值，是不起作用的
-                    let mut pre=patient_prescription.get(prescription_index as u64).unwrap();
-                    pre.is_use=true;
-                    patient_prescription.replace(prescription_index, &pre);
-                    return true;
-                }
-                return false;
+     // 药房工作人员确认用户缴费并发药
+    pub fn confirm_payment_and_dispense_medicine(&mut self, patient_id: String, prescription_index: u64) -> bool {
+        // 获取调用者账户ID
+        let pharmacy_staff_id = env::signer_account_id().to_string();
+        // 确保调用者是药房工作人员
+        assert!(
+            self.identify.get(&pharmacy_staff_id) == Some("pharmacy".to_string()),
+            "只有药房工作人员可以调用此函数"
+        );
+        // 获取患者药方记录
+        if self.patient_medicine.get(&patient_id).is_some() {
+            // 确保索引有效
+            assert!(prescription_index < self.patient_medicine.get(&patient_id).unwrap().len() as u64, "药方索引无效");
+            // 获取要更新的药方记录
+            let mut patient_prescription=self.patient_medicine.get(&patient_id).unwrap();
+            if patient_prescription.get(prescription_index as u64).is_some() {
+                // 直接更新 is_use 变量,必须使用replace，不能直接修改变量的值，是不起作用的
+                let mut pre=patient_prescription.get(prescription_index as u64).unwrap();
+                pre.is_use=true;
+                patient_prescription.replace(prescription_index, &pre);
+                return true;
             }
-            false
+            return false;
         }
+        false
+    }
     // 查询某人药方的函数
     pub fn get_user_prescriptions(&self, patient_id: String) -> Vec<Prescription> {
         // 检查调用者是否是患者本人
@@ -268,6 +295,36 @@ impl Contract {
             return Vec::new();
         }
     }
+
+    pub fn get_doctor_status(&self, doctor_id: &String) -> bool {
+        if let Some(status) = self.doctor_status.get(doctor_id){
+            status
+        } else {
+            panic!("invalid doctor id.");
+        }
+    }
+
+    // 患者和处于空闲状态的医生预约挂号看病
+    pub fn make_reservation(&mut self, doctor_id: &String) -> bool {
+        let caller = env::signer_account_id().to_string();
+        assert_eq!(self.check_role(&caller,"patient".to_string()),true,"Method caller isn't a patient.");
+        assert_eq!(self.check_role(doctor_id,"doctor".to_string()),true,"Input doctor id isn't valid.");
+        let mut status = self.get_doctor_status(doctor_id);
+        if status == false {
+            panic!("This doctor isn't avaliable.");
+            return false;
+        } else {
+            status = false;
+            self.doctor_status.insert(doctor_id,&status);
+            let reservation_rec = Reservation {
+                patient: caller.clone(),
+                doctor: doctor_id.clone(),
+                time: env::block_timestamp().to_string(),
+            };
+            self.reservation_record.insert(&caller, &reservation_rec);
+        }
+        true
+    }
 }
 
 /*
@@ -280,17 +337,36 @@ mod tests {
     use near_sdk::test_utils::VMContextBuilder;
     use near_sdk::{testing_env, VMContext};
     use super::*;
+    //建立测试环境
+    fn set_context(is_view: bool,user:String) {
+        let mut builder = VMContextBuilder::new();
+        builder.predecessor_account_id(user.parse().unwrap());
+        builder.signer_account_id(user.parse().unwrap());
+        builder.is_view(is_view);
+        testing_env!(builder.build());
+    }
+
     //测试更变账户角色
     #[test]
-    fn sign_test(){
+    fn register_and_checkrole_test(){
         let mut contract = Contract::default();
-        let mut role="doctor".to_string();
-        let mut role1="patient".to_string();
-        let judge=contract.register(role);
-        let judge1=contract.register(role1);
-        let my_role=contract.get_role();
-        println!("{}",my_role);
+        set_context(false,"alice.near".to_string());
+        let mut doctor_id = "alice.near".to_string();
+        let mut role = "doctor".to_string();
+        let grant_role_status =  contract.register(role);
+        assert_eq!(grant_role_status,true,"grant doctor role failed.");
+        let check_role = contract.check_role(&doctor_id,"doctor".to_string());
+        assert_eq!(check_role,true,"check doctor role failed.");
+
+        set_context(false,"bob.near".to_string());
+        let mut patient_id = "bob.near".to_string();
+        let mut role2 = "patient".to_string();
+        let grant_role2_status =  contract.register(role2);
+        assert_eq!(grant_role2_status,true,"grant patient role failed.");
+        let check_role2 = contract.check_role(&patient_id,"patient".to_string());
+        assert_eq!(check_role2,true,"check patient role failed.");
     }
+
     //测试医生为病人添加病例
     #[test]
     fn add_record_terst(){
@@ -433,5 +509,31 @@ mod tests {
 
         let context = get_context(true, "doctor.near".to_string());
         testing_env!(context);
+    }
+
+    //测试预约挂号功能
+    #[test]
+    #[should_panic(expected = "This doctor isn't avaliable.")]
+    fn reservation_test() {
+        let mut contract = Contract::default();
+        set_context(false,"doctor.near".to_string());
+        let role = "doctor".to_string();
+        let grant_role_status =  contract.register(role);
+
+        set_context(false,"patient.near".to_string());
+        let role2 = "patient".to_string();
+        let grant_role2_status =  contract.register(role2);
+
+        let doctor_id = "doctor.near".to_string();
+        let status = contract.get_doctor_status(&doctor_id);
+        assert_eq!(status,true,"doctor status invalid.");
+
+        let reservation_result = contract.make_reservation(&doctor_id);
+        assert_eq!(reservation_result,true,"reservation invalid.");
+
+        let new_status = contract.get_doctor_status(&doctor_id);
+        assert_eq!(new_status,false,"doctor status should be false.");
+
+        let _ = contract.make_reservation(&doctor_id);//should panic
     }
 }
