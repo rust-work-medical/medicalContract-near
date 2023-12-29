@@ -8,7 +8,7 @@ use near_sdk::serde::{Serialize,Deserialize};
 use near_sdk::near_bindgen;
 use near_sdk::{Balance,AccountId,env};
 use near_sdk::collections::{LookupMap, Vector,UnorderedMap,UnorderedSet};
-use near_sdk::test_utils::VMContextBuilder;
+// use near_sdk::test_utils::VMContextBuilder;
 #[near_bindgen]
 #[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
@@ -60,7 +60,7 @@ impl fmt::Display for MedicalRecord {
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct Contract {
     //账户身份
-    identify:UnorderedMap<String, String>,
+    pub identify:UnorderedMap<String, String>,
     //病例详情
     pub patient_record: UnorderedMap<String, Vector<MedicalRecord>>,
     //授权病例查询列表
@@ -95,12 +95,12 @@ impl Default for Contract {
 impl Contract {
     //注册
     pub fn register(&mut self,role:String) -> bool {
+        log_str(&format!("Saving greeting: {:?}", role));
+        log_str(&format!("{}",env::signer_account_id().as_str().to_string()));
         self.identify.insert(&env::signer_account_id().as_str().to_string(),&role);
         if role == "doctor" {
             self.doctor_status.insert(&env::signer_account_id().as_str().to_string(),&true);
         }
-        log_str(&format!("Saving greeting: {role}"));
-        log_str(&format!("{}",env::signer_account_id().as_str().to_string()));
         return true;
     }
 
