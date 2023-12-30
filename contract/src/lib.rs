@@ -185,7 +185,6 @@ impl Contract {
                             self.patient_record.insert(&patient_id,&patient_recode_vec);
                         }
                         log_str(&format!("保存病例成功: {medical_record}"));
-                        //TODO 这里的时间总是为0,不确定是不是测试环境导致的，后续还需要上链后测试
                         log_str(&format!("当前时间: {}",env::block_timestamp()));
                         return true;
                     },
