@@ -39,8 +39,8 @@ pub struct Prescription {
 //药
 pub struct Medicine {
     pub medicine_info: String,
-    pub medicine_price: String,
     pub medicine_name: String,
+    pub price: u32
 }
 
 #[near_bindgen]
@@ -60,6 +60,15 @@ pub struct Reservation {
 pub struct Vistor {
     pub visitor: String,
     pub time: String
+}
+#[near_bindgen]
+#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+//患者账单信息
+pub struct Bill {
+    pub total_amount: u32,//为了节省链上存储开销选择32位无符号整型，谁家好人看病能花42亿以上啊……
+    pub last_update_time: String,
+    pub is_paid: bool
 }
 
 impl fmt::Display for MedicalRecord {
@@ -85,7 +94,9 @@ pub struct Contract {
     //医生状态 true代表空闲 false代表已有预约
     pub doctor_status: UnorderedMap<String, bool>,
     //住院患者的访客记录列表
-    pub vistor_list: UnorderedMap<String, Vector<Vistor>>
+    pub vistor_list: UnorderedMap<String, Vector<Vistor>>,
+    //患者账单信息
+    pub bill_record: UnorderedMap<String, Bill>
 }
 const MIN_STORAGE: Balance = 1_100_000_000_000_000_000_000_000; //1.1Ⓝ
 const POINT_ONE: Balance = 100_000_000_000_000_000_000_000;//0.1N
@@ -101,7 +112,8 @@ impl Default for Contract {
             patient_medicine:UnorderedMap::new(b"m"),
             reservation_record:UnorderedMap::new(b"r"),
             doctor_status:UnorderedMap::new(b"d"),
-            vistor_list:UnorderedMap::new(b"v")
+            vistor_list:UnorderedMap::new(b"v"),
+            bill_record:UnorderedMap::new(b"b")
         }
     }
 }
@@ -116,6 +128,15 @@ impl Contract {
         self.identify.insert(&env::signer_account_id().as_str().to_string(),&role);
         if role == "doctor" {
             self.doctor_status.insert(&env::signer_account_id().as_str().to_string(),&true);
+        } else if role == "patient" {
+            let patient_bill = Bill {
+                total_amount: 0,
+                last_update_time: env::block_timestamp().to_string(),
+                is_paid: false
+            };
+
+            let patient_id = env::signer_account_id().as_str().to_string();
+            self.bill_record.insert(&patient_id, &patient_bill);
         }
         return true;
     }
@@ -231,12 +252,15 @@ impl Contract {
     pub fn prescribe_medicine(&mut self, patient_id: String, medicine: Vec<Medicine>) -> bool {
         // 获取调用者账户ID
         let doctor_id = env::signer_account_id().to_string();
+        assert_eq!(self.check_role(&patient_id,"patient".to_string()),true,"Input patient id isn't valid.");
 
         // 确保调用者是医生
         assert!(
             self.identify.get(&doctor_id) == Some("doctor".to_string()),
             "只有医生可以调用此函数"
         );
+
+        let medicine_info = medicine.clone();
 
         // 创建处方记录
         let prescription = Prescription {
@@ -260,8 +284,46 @@ impl Contract {
             self.patient_medicine.insert(&patient_id, &new_prescriptions);
         }
 
+        //更新账单信息
+        if let Some(mut bill) = self.bill_record.get(&patient_id) {
+            for element in &medicine_info {
+                bill.total_amount += element.price;
+            }
+            bill.last_update_time = env::block_timestamp().to_string();
+            self.bill_record.insert(&patient_id,&bill);
+        } else {
+            panic!("Could not find the bill of this patient.");
+        }
+
         true
     }
+
+    pub fn pay_the_bill(&mut self, patient_id: &String, balance: u32) -> bool {
+        assert_eq!(self.check_role(&patient_id,"patient".to_string()),true,"Input patient id isn't valid.");
+        let (amount,_,paid) = self.get_bill_info(patient_id);
+        assert_eq!(paid,false,"This patient has paid his/her bill.");
+        if amount > balance {
+            log_str("Payment failed: insufficient balance.");
+            return false;
+        } else {
+            let new_bill = Bill {
+                total_amount: amount.clone(),
+                last_update_time: env::block_timestamp().to_string(),
+                is_paid: true
+            };
+            self.bill_record.insert(patient_id,&new_bill);
+            let remain = balance - amount;
+            log_str(&format!("Payment success: The remaining amount is {}.",remain));
+        }
+        true
+    }
+
+    pub fn check_bill_is_paid(&self, patient_id: &String) -> bool {
+        assert_eq!(self.check_role(&patient_id,"patient".to_string()),true,"Input patient id isn't valid.");
+        let (_,_,status) = self.get_bill_info(patient_id);
+        status
+    }
+
      // 药房工作人员确认用户缴费并发药
     pub fn confirm_payment_and_dispense_medicine(&mut self, patient_id: String, prescription_index: u64) -> bool {
         // 获取调用者账户ID
@@ -370,11 +432,19 @@ impl Contract {
 
     }
 
-    pub fn get_visitor_list(&mut self, patient_id: &String) -> Vec<Vistor> {
+    pub fn get_visitor_list(&self, patient_id: &String) -> Vec<Vistor> {
         if let Some(visitor_vector) = self.vistor_list.get(&patient_id) {
             return visitor_vector.to_vec();
         } else {
             return Vec::new();
+        }
+    }
+
+    pub fn get_bill_info(&self, patient_id: &String) -> (u32,String,bool) {
+        if let Some(bill_info) = self.bill_record.get(&patient_id) {
+            return (bill_info.total_amount,bill_info.last_update_time,bill_info.is_paid);
+        } else {
+            panic!("Could not find the bill of this patient.");
         }
     }
 }
@@ -494,25 +564,27 @@ mod tests {
         // 创建合约实例
         let mut contract = Contract::default();
 
-        // 设置测试上下文，模拟医生调用开药方函数
-        let context = get_context(false, "doctor.near".to_string());
-        testing_env!(context);
-        let doctor_id = "doctor.near".to_string();
-        contract.identify.insert(&doctor_id,&"doctor".to_string());
-        // 假设这是一个病人ID
+        set_context(false,"patient.near".to_string());
+        let role = "patient".to_string();
+        let grant_role_status =  contract.register(role);
+        set_context(false,"doctor.near".to_string());
+        let role2 = "doctor".to_string();
+        let grant_role2_status =  contract.register(role2);
+
         let patient_id = "patient.near".to_string();
-        contract.identify.insert(&patient_id,&"patient".to_string());
+        let doctor_id = "doctor.near".to_string();
+
         // 假设这是一个药物信息
         let medicine = vec![
             Medicine {
                 medicine_info: "Information about Medicine A".to_string(),
-                medicine_price: "10 NEAR".to_string(),
                 medicine_name: "Medicine A".to_string(),
+                price: 10
             },
             Medicine {
                 medicine_info: "Information about Medicine B".to_string(),
-                medicine_price: "15 NEAR".to_string(),
                 medicine_name: "Medicine B".to_string(),
+                price: 20
             },
         ];
 
@@ -614,6 +686,63 @@ mod tests {
         let result2 = contract.record_visitor(&patient_id);
         let visitor_vec2 = contract.get_visitor_list(&patient_id);
         assert_eq!(visitor_vec2.len(),1,"visitor vector num is not correct.");
+    }
+
+    #[test]
+    #[should_panic(expected = "This patient has paid his/her bill.")]
+    fn bill_test() {
+        let mut contract = Contract::default();
+        set_context(false,"patient.near".to_string());
+        let role = "patient".to_string();
+        let grant_role_status =  contract.register(role);
+
+        let patient_id = "patient.near".to_string();
+        let (amount,_,paid) = contract.get_bill_info(&patient_id);
+
+        assert_eq!(amount,0,"invalid bill total amount.");
+        assert_eq!(paid,false,"invalid bill status.");
+
+        set_context(false,"doctor.near".to_string());
+        let role2 = "doctor".to_string();
+        let grant_role2_status =  contract.register(role2);
+
+        let medicine = vec![
+            Medicine {
+                medicine_info: "Information about Medicine A".to_string(),
+                medicine_name: "Medicine A".to_string(),
+                price: 10
+            },
+            Medicine {
+                medicine_info: "Information about Medicine B".to_string(),
+                medicine_name: "Medicine B".to_string(),
+                price: 20
+            },
+        ];
+        
+        // 调用医生开药方函数
+        let result = contract.prescribe_medicine(patient_id.clone(), medicine.clone());
+
+        // 验证结果
+        assert!(result, "开药方失败");
+
+        let (new_amount,_,new_paid) = contract.get_bill_info(&patient_id);
+
+        assert_eq!(new_amount,30,"invalid bill total amount.");
+        assert_eq!(new_paid,false,"invalid bill status.");
+
+        set_context(false,"patient.near".to_string());
+        let patient_id = "patient.near".to_string();
+        let payment_result = contract.pay_the_bill(&patient_id,10);
+        assert_eq!(payment_result,false,"payment should failed.");
+        let bill_status = contract.check_bill_is_paid(&patient_id);
+        assert_eq!(bill_status,false,"bill ought to haven't been paid.");
+
+        let payment_result2 = contract.pay_the_bill(&patient_id,30);
+        assert_eq!(payment_result2,true,"payment should success.");
+        let bill_status2 = contract.check_bill_is_paid(&patient_id);
+        assert_eq!(bill_status2,true,"bill should has been paid.");
+
+        let payment_result3 = contract.pay_the_bill(&patient_id,50);
     }
 
 }
