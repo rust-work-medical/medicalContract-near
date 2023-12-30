@@ -413,6 +413,7 @@ impl Contract {
         // let mut patient = self.patients.get(&patient_id).unwrap();
         // patient.in_hospital = true;
         // self.patients.insert(&patient_id, &patient);
+        log_str(&format!("入院登记成功: {patient_id}"));
         true
     }
 
