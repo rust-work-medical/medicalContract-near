@@ -151,8 +151,8 @@ impl Contract {
     }
 
     //检查某用户是否拥有某个权限
-    pub fn check_role(&self, account_id: &str, role:String) -> bool {
-        match self.identify.get(&account_id.to_string()){
+    pub fn check_role(&self, account_id: &String, role:String) -> bool {
+        match self.identify.get(account_id){
             Some(x) => return x == role,
             None => panic!("该账户还没有注册成为{}角色",role)
         }
@@ -299,7 +299,7 @@ impl Contract {
     }
 
     pub fn pay_the_bill(&mut self, patient_id: &String, balance: u32) -> bool {
-        assert_eq!(self.check_role(&patient_id,"patient".to_string()),true,"Input patient id isn't valid.");
+        assert_eq!(self.check_role(patient_id,"patient".to_string()),true,"Input patient id isn't valid.");
         let (amount,_,paid) = self.get_bill_info(patient_id);
         assert_eq!(paid,false,"This patient has paid his/her bill.");
         if amount > balance {
@@ -319,7 +319,7 @@ impl Contract {
     }
 
     pub fn check_bill_is_paid(&self, patient_id: &String) -> bool {
-        assert_eq!(self.check_role(&patient_id,"patient".to_string()),true,"Input patient id isn't valid.");
+        assert_eq!(self.check_role(patient_id,"patient".to_string()),true,"Input patient id isn't valid.");
         let (_,_,status) = self.get_bill_info(patient_id);
         status
     }
