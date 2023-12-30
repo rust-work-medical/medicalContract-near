@@ -21,6 +21,7 @@ pub struct MedicalRecord {
   //看病时间
   pub time: String
 }
+
 #[near_bindgen]
 #[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
@@ -31,6 +32,7 @@ pub struct Prescription {
     pub prescription_time: String,
     pub is_use:bool,
 }
+
 #[near_bindgen]
 #[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize,Clone)]
 #[serde(crate = "near_sdk::serde")]
@@ -40,6 +42,7 @@ pub struct Medicine {
     pub medicine_price: String,
     pub medicine_name: String,
 }
+
 #[near_bindgen]
 #[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
@@ -49,6 +52,16 @@ pub struct Reservation {
     pub doctor: String,
     pub time: String
 }
+
+#[near_bindgen]
+#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize)]
+#[serde(crate = "near_sdk::serde")]
+//访客信息
+pub struct Vistor {
+    pub visitor: String,
+    pub time: String
+}
+
 impl fmt::Display for MedicalRecord {
     fn fmt<'a>(&self, f: &mut fmt::Formatter<'a>) -> fmt::Result {
         write!(f, "MedicalRecord(doctor: {}, detail: {}, time: {})", self.doctor, self.detail, self.time)
@@ -70,7 +83,9 @@ pub struct Contract {
     //患者预约挂号记录列表
     pub reservation_record: UnorderedMap<String, Reservation>,
     //医生状态 true代表空闲 false代表已有预约
-    pub doctor_status: UnorderedMap<String, bool>
+    pub doctor_status: UnorderedMap<String, bool>,
+    //住院患者的访客记录列表
+    pub vistor_list: UnorderedMap<String, Vector<Vistor>>
 }
 const MIN_STORAGE: Balance = 1_100_000_000_000_000_000_000_000; //1.1Ⓝ
 const POINT_ONE: Balance = 100_000_000_000_000_000_000_000;//0.1N
@@ -85,7 +100,8 @@ impl Default for Contract {
             allow_record:UnorderedMap::new(b"a"),
             patient_medicine:UnorderedMap::new(b"m"),
             reservation_record:UnorderedMap::new(b"r"),
-            doctor_status:UnorderedMap::new(b"d")
+            doctor_status:UnorderedMap::new(b"d"),
+            vistor_list:UnorderedMap::new(b"v")
         }
     }
 }
@@ -117,7 +133,7 @@ impl Contract {
     pub fn check_role(&self, account_id: &str, role:String) -> bool {
         match self.identify.get(&account_id.to_string()){
             Some(x) => return x == role,
-            None => panic!("该账户还没有角色")
+            None => panic!("该账户还没有注册成为{}角色",role)
         }
     }
 
@@ -325,6 +341,42 @@ impl Contract {
         }
         true
     }
+
+    // 患者的访客记录
+    pub fn record_visitor(&mut self, patient_id: &String) -> bool {
+        let visitor_id = env::signer_account_id().to_string();
+        assert_eq!(self.check_role(&visitor_id,"visitor".to_string()),true,"Method caller should register as a visitor.");
+        assert_eq!(self.check_role(patient_id,"patient".to_string()),true,"Input patient id isn't valid.");
+
+        let vistior_info = Vistor {
+            visitor: visitor_id,
+            time: env::block_timestamp().to_string(),
+        };
+
+        if self.vistor_list.get(&patient_id).is_some(){
+            self.vistor_list.get(&patient_id).unwrap().push(&vistior_info);
+        }else {
+            let prefix: Vec<u8> = 
+            [
+                b"v".as_slice(),
+                &near_sdk::env::sha256_array(&patient_id.as_bytes()),
+            ].concat();
+            let mut new_vector: Vector<Vistor> = Vector::new(prefix);
+            new_vector.push(&vistior_info);
+            self.vistor_list.insert(&patient_id, &new_vector);
+        }
+
+        true
+
+    }
+
+    pub fn get_visitor_list(&mut self, patient_id: &String) -> Vec<Vistor> {
+        if let Some(visitor_vector) = self.vistor_list.get(&patient_id) {
+            return visitor_vector.to_vec();
+        } else {
+            return Vec::new();
+        }
+    }
 }
 
 /*
@@ -529,11 +581,39 @@ mod tests {
         assert_eq!(status,true,"doctor status invalid.");
 
         let reservation_result = contract.make_reservation(&doctor_id);
-        assert_eq!(reservation_result,true,"reservation invalid.");
+        assert_eq!(reservation_result,true,"reservation failed.");
 
         let new_status = contract.get_doctor_status(&doctor_id);
         assert_eq!(new_status,false,"doctor status should be false.");
 
         let _ = contract.make_reservation(&doctor_id);//should panic
     }
+
+    #[test]
+    #[should_panic(expected =  "Method caller should register as a visitor.")]
+    fn visitor_record_test() {
+        let mut contract = Contract::default();
+        set_context(false,"patient.near".to_string());
+        let role = "patient".to_string();
+        let grant_role_status =  contract.register(role);
+
+        set_context(false,"visitor1.near".to_string());
+        let role2 = "visitor".to_string();
+        let grant_role2_status = contract.register(role2);
+
+        let patient_id = "patient.near".to_string();
+        let result = contract.record_visitor(&patient_id);
+
+        assert_eq!(result,true,"visitor record failed.");
+        let visitor_vec = contract.get_visitor_list(&patient_id);
+        assert_eq!(visitor_vec.len(),1,"visitor vector num is not correct.");
+        
+        set_context(false,"visitor2.near".to_string());
+        let role3 = "doctor".to_string();
+        let grant_role3_status = contract.register(role3);
+        let result2 = contract.record_visitor(&patient_id);
+        let visitor_vec2 = contract.get_visitor_list(&patient_id);
+        assert_eq!(visitor_vec2.len(),1,"visitor vector num is not correct.");
+    }
+
 }
