@@ -532,6 +532,7 @@ impl Contract {
         // let mut patient = self.patients.get(&patient_id).unwrap();
         // patient.in_hospital = false;
         // self.patients.insert(&patient_id, &patient);
+        log_str(&format!("入院登记成功: {patient_id}"));
         true
     }
 
@@ -593,6 +594,7 @@ impl Contract {
 
         // 更新巡查记录映射
         self.rounds_records.insert(&room_number, &records);
+        log_str(&format!("医生巡查成功: {room_number}"));
         true
     }
 
