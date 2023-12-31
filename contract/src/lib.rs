@@ -49,8 +49,8 @@ pub struct Medicine {
 pub struct Hospitalization {
     pub patient: String,   // 患者 ID
     pub room_number: u32,     // 床位号
-    pub admission_date: u64,  // 入院时间戳
-    pub discharge_date: Option<u64>,  // 出院时间戳（可选）
+    pub admission_date: String,  // 入院时间戳
+    pub discharge_date: Option<String>,  // 出院时间戳（可选）
     pub in_hospital: bool,  // 是否在院中
 }
 
@@ -69,7 +69,7 @@ pub struct Bed {
 pub struct RoundsRecord {
     pub doctor: String,   // 医生 ID
     pub room_number: u32,    // 床位号
-    pub timestamp: u64,      // 巡查时间戳
+    pub timestamp: String,      // 巡查时间戳
 }
 
 #[near_bindgen]
@@ -466,7 +466,7 @@ impl Contract {
         let room_number = *available_beds.first().unwrap();
 
         // 获取当前时间戳作为入院时间
-        let admission_date = env::block_timestamp();
+        let admission_date = env::block_timestamp().to_string();
 
         // 创建住院信息对象
         let hospitalization = Hospitalization {
@@ -512,7 +512,7 @@ impl Contract {
         let mut hospitalization = self.hospitalizations.get(&patient_id).unwrap();
 
         // 设置出院时间为当前时间戳
-        hospitalization.discharge_date = Some(env::block_timestamp());
+        hospitalization.discharge_date = Some(env::block_timestamp().to_string());
 
          // 更新在院状态为 false
         hospitalization.in_hospital = false;
@@ -544,10 +544,9 @@ impl Contract {
     }
     // 添加空床位列表
     pub fn add_available_beds(&mut self, room_number: u32)  -> bool{
-        // 创建住院信息对象
         let bed = Bed {
             room_number,
-            is_occupied: false,// 更新患者状态为在院
+            is_occupied: false,
         };
         self.beds.insert(&room_number, &bed);
         true
@@ -576,7 +575,7 @@ impl Contract {
              assert!(false, "床位号错误");
         }
         // 获取当前时间戳
-        let timestamp = env::block_timestamp();
+        let timestamp = env::block_timestamp().to_string();
 
         // 创建巡查记录对象
         let rounds_record = RoundsRecord {
@@ -688,24 +687,33 @@ mod tests {
         // 创建合约实例
         let mut contract = Contract::default();
 
-        // 设置测试上下文，模拟医生调用开药方函数
+        // 假设这是一个病人ID
+        let context2 = get_context(false,"patient.near".to_string());
+        testing_env!(context2);
+        let patient_id = "patient.near".to_string();
+        contract.identify.insert(&patient_id,&"patient".to_string());
+
         let context = get_context(false, "doctor.near".to_string());
         testing_env!(context);
         let doctor_id = "doctor.near".to_string();
         contract.identify.insert(&doctor_id,&"doctor".to_string());
-        // 假设这是一个病人ID
-        let patient_id = "patient.near".to_string();
-        contract.identify.insert(&patient_id,&"patient".to_string());
 
         //Write a for loop from 1 to 10 to add_available_beds
         for i in 1..=10 {
             contract.add_available_beds(i);
         }
+
+        let bed_list = contract.get_available_beds();
+        assert_eq!(bed_list.len(),10,"available bed num is not correct.");
         
         //入院登记
         let mut result=false;
         result=contract.admit_patient(patient_id.clone());
         assert!(&result, "入院登记失败");
+
+        let bed_list2 = contract.get_available_beds();
+        assert_eq!(bed_list2.len(),9,"available bed num is not correct.");
+
         //查询病人床位
         if let Some(hospitalization) = contract.hospitalizations.get(&patient_id) {
             // 如果找到了，返回包含病房号和在院状态的元组
@@ -713,6 +721,12 @@ mod tests {
             println!("病人在病房号 {}，是否住院中：{}", &hospitalization.room_number, hospitalization.in_hospital);
             let _result=contract.perform_rounds(hospitalization.room_number);
             assert!(_result, "查房失败");
+
+            if let Some(current_rounds_record) = contract.rounds_records.get(&hospitalization.room_number){
+                assert_eq!(current_rounds_record.len(),1,"incorrect round record num.");
+            } else {
+                assert!(false, "查房信息查询失败");
+            }
 
         } else {
             // 如果没有找到，返回 None
@@ -735,9 +749,8 @@ mod tests {
             assert!(false, "入院登记失败");
         }
 
-        // 重置上下文为其他测试
-        let context = get_context(true,"bob.near".to_string());
-        testing_env!(context);
+        let bed_list3 = contract.get_available_beds();
+        assert_eq!(bed_list3.len(),10,"available bed num is not correct.");
     }
 
     //测试医生为病人添加病例
