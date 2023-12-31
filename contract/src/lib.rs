@@ -49,8 +49,8 @@ pub struct Medicine {
 pub struct Hospitalization {
     pub patient: String,   // 患者 ID
     pub room_number: u32,     // 床位号
-    pub admission_date: u64,  // 入院时间戳
-    pub discharge_date: Option<u64>,  // 出院时间戳（可选）
+    pub admission_date: String,  // 入院时间戳
+    pub discharge_date: Option<String>,  // 出院时间戳（可选）
     pub in_hospital: bool,  // 是否在院中
 }
 
@@ -69,7 +69,7 @@ pub struct Bed {
 pub struct RoundsRecord {
     pub doctor: String,   // 医生 ID
     pub room_number: u32,    // 床位号
-    pub timestamp: u64,      // 巡查时间戳
+    pub timestamp: String,      // 巡查时间戳
 }
 
 #[near_bindgen]
@@ -209,20 +209,28 @@ impl Contract {
                             time: env::block_timestamp().to_string(),//timestamp?
                         };
                         //如果存在直接插入一条新记录，如果不存在则新建一个Vector,并插入
-                        if self.patient_record.get(&patient_id).is_some() {
-                            self.patient_record.get(&patient_id).unwrap().push(&medical_record);
+                        if self.patient_record.get(&patient).is_some() {
+                            let mut patient_medicine_vec = self.patient_record.get(&patient).unwrap();
+                            patient_medicine_vec.push(&medical_record);
+                            self.patient_record.insert(&patient, &patient_medicine_vec);
+
+                            
+                            log_str(&format!("保存病例成功: {medical_record}"));
+                            log_str(&format!("当前时间: {}",env::block_timestamp()));
                         }else {
                             let prefix: Vec<u8> = 
                             [
                                 b"m".as_slice(),
-                                &near_sdk::env::sha256_array(patient_id.as_bytes()),
+                                &near_sdk::env::sha256_array(patient.as_bytes()),
                             ].concat();//prefix的作用?
                             let mut patient_recode_vec:Vector<MedicalRecord>=Vector::new(prefix);
                             patient_recode_vec.push(&medical_record);
-                            self.patient_record.insert(&patient_id,&patient_recode_vec);
-                        }
-                        log_str(&format!("保存病例成功: {medical_record}"));
+                            self.patient_record.insert(&patient,&patient_recode_vec);
+                            log_str(&format!("保存病例成功: {medical_record}"));
+                            log_str(&format!("病人编号: {patient}"));
                         log_str(&format!("当前时间: {}",env::block_timestamp()));
+                        }
+                        
                         return true;
                     },
                     None => return false,//panic
@@ -238,7 +246,9 @@ impl Contract {
         assert!(self.identify.get(&env::signer_account_id().as_str().to_string()).is_some(), "该账户还没有角色");
         //如果允许列表已经含有该角色的授权列表
         if self.allow_record.get(&env::signer_account_id().as_str().to_string()).is_some() {
-            self.allow_record.get(&env::signer_account_id().as_str().to_string()).unwrap().insert(&doctor);
+            let mut patient_medicine_vec = self.allow_record.get(&env::signer_account_id().as_str().to_string()).unwrap();
+            patient_medicine_vec.insert(&doctor);
+            self.allow_record.insert(&env::signer_account_id().as_str().to_string(), &patient_medicine_vec);
         }else {
             let prefix: Vec<u8> = 
             [
@@ -281,6 +291,8 @@ impl Contract {
             // 返回病例列表
             return patient_rec_vec.to_vec();
         } else {
+            log_str(&format!("病人编号: {patient_id}"));
+            log_str(&format!("没有数据"));
             return Vec::new();
         }
     }
@@ -308,7 +320,9 @@ impl Contract {
 
         // 将处方添加到患者记录中
         if self.patient_medicine.get(&patient_id).is_some(){
-            self.patient_medicine.get(&patient_id).unwrap().push(&prescription);
+            let mut patient_medicine_vec = self.patient_medicine.get(&patient_id).unwrap();
+            patient_medicine_vec.push(&prescription);
+            self.patient_medicine.insert(&patient_id, &patient_medicine_vec);
         }else {
             let prefix: Vec<u8> = 
             [
@@ -318,6 +332,7 @@ impl Contract {
             let mut new_prescriptions: Vector<Prescription> = Vector::new(prefix);
             new_prescriptions.push(&prescription);
             self.patient_medicine.insert(&patient_id, &new_prescriptions);
+            log_str(&format!("保存药方成功2: "));
         }
 
         //更新账单信息
@@ -466,7 +481,7 @@ impl Contract {
         let room_number = *available_beds.first().unwrap();
 
         // 获取当前时间戳作为入院时间
-        let admission_date = env::block_timestamp();
+        let admission_date = env::block_timestamp().to_string();
 
         // 创建住院信息对象
         let hospitalization = Hospitalization {
@@ -512,7 +527,7 @@ impl Contract {
         let mut hospitalization = self.hospitalizations.get(&patient_id).unwrap();
 
         // 设置出院时间为当前时间戳
-        hospitalization.discharge_date = Some(env::block_timestamp());
+        hospitalization.discharge_date = Some(env::block_timestamp().to_string());
 
          // 更新在院状态为 false
         hospitalization.in_hospital = false;
@@ -545,10 +560,9 @@ impl Contract {
     }
     // 添加空床位列表
     pub fn add_available_beds(&mut self, room_number: u32)  -> bool{
-        // 创建住院信息对象
         let bed = Bed {
             room_number,
-            is_occupied: false,// 更新患者状态为在院
+            is_occupied: false,
         };
         self.beds.insert(&room_number, &bed);
         true
@@ -577,7 +591,7 @@ impl Contract {
              assert!(false, "床位号错误");
         }
         // 获取当前时间戳
-        let timestamp = env::block_timestamp();
+        let timestamp = env::block_timestamp().to_string();
 
         // 创建巡查记录对象
         let rounds_record = RoundsRecord {
@@ -612,7 +626,10 @@ impl Contract {
         };
 
         if self.vistor_list.get(&patient_id).is_some(){
-            self.vistor_list.get(&patient_id).unwrap().push(&vistior_info);
+            let mut patient_medicine_vec = self.vistor_list.get(&patient_id).unwrap();
+            patient_medicine_vec.push(&vistior_info);
+            self.vistor_list.insert(&patient_id, &patient_medicine_vec);
+            //self.vistor_list.get(&patient_id).unwrap().push(&vistior_info);
         }else {
             let prefix: Vec<u8> = 
             [
@@ -690,24 +707,33 @@ mod tests {
         // 创建合约实例
         let mut contract = Contract::default();
 
-        // 设置测试上下文，模拟医生调用开药方函数
+        // 假设这是一个病人ID
+        let context2 = get_context(false,"patient.near".to_string());
+        testing_env!(context2);
+        let patient_id = "patient.near".to_string();
+        contract.identify.insert(&patient_id,&"patient".to_string());
+
         let context = get_context(false, "doctor.near".to_string());
         testing_env!(context);
         let doctor_id = "doctor.near".to_string();
         contract.identify.insert(&doctor_id,&"doctor".to_string());
-        // 假设这是一个病人ID
-        let patient_id = "patient.near".to_string();
-        contract.identify.insert(&patient_id,&"patient".to_string());
 
         //Write a for loop from 1 to 10 to add_available_beds
         for i in 1..=10 {
             contract.add_available_beds(i);
         }
+
+        let bed_list = contract.get_available_beds();
+        assert_eq!(bed_list.len(),10,"available bed num is not correct.");
         
         //入院登记
         let mut result=false;
         result=contract.admit_patient(patient_id.clone());
         assert!(&result, "入院登记失败");
+
+        let bed_list2 = contract.get_available_beds();
+        assert_eq!(bed_list2.len(),9,"available bed num is not correct.");
+
         //查询病人床位
         if let Some(hospitalization) = contract.hospitalizations.get(&patient_id) {
             // 如果找到了，返回包含病房号和在院状态的元组
@@ -715,6 +741,12 @@ mod tests {
             println!("病人在病房号 {}，是否住院中：{}", &hospitalization.room_number, hospitalization.in_hospital);
             let _result=contract.perform_rounds(hospitalization.room_number);
             assert!(_result, "查房失败");
+
+            if let Some(current_rounds_record) = contract.rounds_records.get(&hospitalization.room_number){
+                assert_eq!(current_rounds_record.len(),1,"incorrect round record num.");
+            } else {
+                assert!(false, "查房信息查询失败");
+            }
 
         } else {
             // 如果没有找到，返回 None
@@ -737,9 +769,8 @@ mod tests {
             assert!(false, "入院登记失败");
         }
 
-        // 重置上下文为其他测试
-        let context = get_context(true,"bob.near".to_string());
-        testing_env!(context);
+        let bed_list3 = contract.get_available_beds();
+        assert_eq!(bed_list3.len(),10,"available bed num is not correct.");
     }
 
     //测试医生为病人添加病例
@@ -791,11 +822,13 @@ mod tests {
             detail: "Some details".to_string(),
             time: "2023-01-01".to_string(),
         };
-        let mut test_vec:Vector<MedicalRecord>=Vector::new(b"n");
-        test_vec.push(&medical_record);
-        // 将病例添加到患者记录中
-        contract.patient_record.insert(&patient_id, &test_vec);
 
+        // let mut test_vec:Vector<MedicalRecord>=Vector::new(b"n");
+        // test_vec.push(&medical_record);
+        // // 将病例添加到患者记录中
+        // contract.patient_record.insert(&patient_id, &test_vec);
+        log_str(&format!("病人编号:2 {patient_id}"));
+        contract.add_record(patient_id.clone(),"patient is already present".to_string());
         // 将医生添加到授权名单中
         let mut authorized_doctors = UnorderedSet::new(b"a".to_vec());
         authorized_doctors.insert(&doctor_id);
@@ -843,13 +876,13 @@ mod tests {
 
         // 调用医生开药方函数
         let result = contract.prescribe_medicine(patient_id.clone(), medicine.clone());
-
+        let result = contract.prescribe_medicine(patient_id.clone(), medicine.clone());
         // 验证结果
         assert!(result, "开药方失败");
 
         // 验证药方是否正确添加到患者记录中
         let patient_medicine = contract.patient_medicine.get(&patient_id).unwrap();
-        assert_eq!(patient_medicine.len(), 1, "患者记录中应有一条药方");
+        assert_eq!(patient_medicine.len(), 2, "患者记录中应有一条药方");
 
         let prescribed_medicine = &patient_medicine.get(0).unwrap();;
         assert_eq!(
@@ -882,7 +915,7 @@ mod tests {
         let patient_records = contract.get_user_prescriptions(patient_id.clone());
 
         // 验证结果
-        assert_eq!(patient_records.len(), 1);
+        assert_eq!(patient_records.len(), 2);
 
         let context = get_context(true, "doctor.near".to_string());
         testing_env!(context);
