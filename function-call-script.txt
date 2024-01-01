@@ -18,7 +18,7 @@ near call ni1l.testnet add_record '{"patient":"sub-patient.ni1l.testnet","detail
 授权病历查看权限：ok
 near call ni1l.testnet add_allow_record '{"doctor":"sub-doctor.ni1l.testnet"}' --accountId sub-patient.ni1l.testnet
 
-查询病历：not very ok 返回值结果是空的
+查询病历：ok
 near call ni1l.testnet get_user_medical_records '{"patient_id":"sub-patient.ni1l.testnet"}' --accountId sub-doctor.ni1l.testnet
 
 患者预约医生挂号：ok
@@ -33,7 +33,7 @@ near call ni1l.testnet record_visitor '{"patient_id":"sub-patient.ni1l.testnet"}
 访客信息查询：ok
 near call ni1l.testnet get_visitor_list '{"patient_id":"sub-patient.ni1l.testnet"}' --accountId sub-patient.ni1l.testnet
 
-医生添加药方：not very ok 第一次添加能成功 第二次添加会追加更新 但显示只有一条
+医生添加药方：ok
 near call ni1l.testnet prescribe_medicine '{"patient_id":"sub-patient.ni1l.testnet","medicine":[{"medicine_info":"m_info","medicine_name":"m_name","price":10}]}' --accountId sub-doctor.ni1l.testnet
 
 查询药方：ok
