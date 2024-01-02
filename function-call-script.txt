@@ -50,3 +50,12 @@ near call ni1l.testnet pay_the_bill '{"patient_id":"sub-patient.ni1l.testnet","b
 
 查询账单状态：ok
 near call ni1l.testnet check_bill_is_paid '{"patient_id":"sub-patient.ni1l.testnet"}' --accountId sub-patient.ni1l.testnet
+
+添加空床位：ok
+near call ni1l.testnet add_available_beds '{"room_number":10}' --accountId sub-doctor.ni1l.testnet
+
+患者入院信息登记：ok
+near call ni1l.testnet admit_patient '{"patient_id":"sub-patient.ni1l.testnet"}' --accountId sub-doctor.ni1l.testnet
+
+患者出院信息登记：ok
+near call ni1l.testnet discharge_patient '{"patient_id":"sub-patient.ni1l.testnet"}' --accountId sub-doctor.ni1l.testnet
