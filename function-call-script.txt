@@ -59,3 +59,6 @@ near call ni1l.testnet admit_patient '{"patient_id":"sub-patient.ni1l.testnet"}'
 
 患者出院信息登记：ok
 near call ni1l.testnet discharge_patient '{"patient_id":"sub-patient.ni1l.testnet"}' --accountId sub-doctor.ni1l.testnet
+
+医生添加病床巡查记录：ok
+near call ni1l.testnet perform_rounds '{"room_number":1}' --accountId sub-doctor.ni1l.testnet
